@@ -9,6 +9,7 @@
 #include <gz/sim/Entity.hh>
 #include <gz/transport/Node.hh>
 #include <gz/msgs/float.pb.h>
+#include <gz/msgs/vector3d.pb.h>
 #include "gz/msgs/Utility.hh"
 #include "gz/sim/components/LinearVelocity.hh"
 #include "gz/sim/components/Inertial.hh"
@@ -79,13 +80,9 @@ public:
 public:
   std::string topicWindDirection = "/vrx/debug/wind/direction";
 
-  /// \brief Topic to subscribe for wind speed commands
+  /// \brief Topic to subscribe for wind velocity vector commands
 public:
-  std::string topicWindSpeedCmd = "/vrx/wind/speed";
-
-  /// \brief Topic to subscribe for wind direction commands (degrees, ENU)
-public:
-  std::string topicWindDirectionCmd = "/vrx/wind/direction";
+  std::string topicWindCmd = "/sim/wind";
 
   /// \brief Last time wind speed and direction was published
 public:
@@ -111,15 +108,20 @@ public:
 public:
   std::unique_ptr<std::mt19937> randGenerator;
 
-  /// \brief Thread-safe storage for wind angle (degrees, ENU) updated via
-  /// subscription. Read each physics step to recompute windDirection vector.
+  /// \brief Thread-safe storage for wind velocity vector X component (m/s)
+  /// updated via subscription. Read each physics step.
 public:
-  std::atomic<double> windAngleCmd{0.0};
+  std::atomic<double> windCmdX{0.0};
 
-  /// \brief Thread-safe storage for wind mean velocity (m/s) updated via
-  /// subscription. Read each physics step to update windMeanVelocity.
+  /// \brief Thread-safe storage for wind velocity vector Y component (m/s)
+  /// updated via subscription. Read each physics step.
 public:
-  std::atomic<double> windSpeedCmd{0.0};
+  std::atomic<double> windCmdY{0.0};
+
+  /// \brief Flag indicating a wind command has been received. SDF defaults
+  /// are preserved until the first command arrives.
+public:
+  std::atomic<bool> windCmdReceived{false};
 };
 
 //////////////////////////////////////////////////
@@ -186,7 +188,6 @@ void USVWind::Configure(const sim::Entity &_entity,
     this->dataPtr->windDirection.Y(sin(windAngle * M_PI / 180));
     this->dataPtr->windDirection.Z(0);
   }
-  this->dataPtr->windAngleCmd.store(windAngle, std::memory_order_relaxed);
 
   gzmsg << "Wind direction unit vector = " << this->dataPtr->windDirection
         << std::endl;
@@ -196,8 +197,6 @@ void USVWind::Configure(const sim::Entity &_entity,
     this->dataPtr->windMeanVelocity =
         sdf->Get<double>("wind_mean_velocity");
   }
-  this->dataPtr->windSpeedCmd.store(
-      this->dataPtr->windMeanVelocity, std::memory_order_relaxed);
 
   gzmsg << "Wind mean velocity = " << this->dataPtr->windMeanVelocity
         << std::endl;
@@ -245,24 +244,14 @@ void USVWind::Configure(const sim::Entity &_entity,
   gzmsg << "topic wind direction = " <<
       this->dataPtr->topicWindDirection << std::endl;
 
-  // Command subscription topics for runtime wind parameter changes
-  if (sdf->HasElement("topic_wind_speed_cmd"))
+  // Command subscription topic for runtime wind velocity vector changes
+  if (sdf->HasElement("topic_wind_cmd"))
   {
-    this->dataPtr->topicWindSpeedCmd =
-        sdf->Get<std::string>("topic_wind_speed_cmd");
+    this->dataPtr->topicWindCmd =
+        sdf->Get<std::string>("topic_wind_cmd");
   }
 
-  gzmsg << "topic wind speed cmd = " << this->dataPtr->topicWindSpeedCmd
-        << std::endl;
-
-  if (sdf->HasElement("topic_wind_direction_cmd"))
-  {
-    this->dataPtr->topicWindDirectionCmd =
-        sdf->Get<std::string>("topic_wind_direction_cmd");
-  }
-
-  gzmsg << "topic wind direction cmd = "
-        << this->dataPtr->topicWindDirectionCmd << std::endl;
+  gzmsg << "topic wind cmd = " << this->dataPtr->topicWindCmd << std::endl;
 
   // Setting the  seed for the random generator.
   unsigned int seed = std::random_device{}();
@@ -290,20 +279,16 @@ void USVWind::Configure(const sim::Entity &_entity,
   this->dataPtr->windDirectionPub = this->dataPtr->node.Advertise<msgs::Float>(
       this->dataPtr->topicWindDirection, opts);
 
-  // Subscribe to command topics for runtime wind parameter changes.
-  // Callbacks update atomic variables read each physics step.
+  // Subscribe to command topic for runtime wind velocity vector changes.
+  // Callback updates atomic variables read each physics step.
   auto *impl = this->dataPtr.get();
 
-  this->dataPtr->node.Subscribe<msgs::Float>(
-      this->dataPtr->topicWindSpeedCmd,
-      [impl](const msgs::Float &msg) {
-        impl->windSpeedCmd.store(msg.data(), std::memory_order_relaxed);
-      });
-
-  this->dataPtr->node.Subscribe<msgs::Float>(
-      this->dataPtr->topicWindDirectionCmd,
-      [impl](const msgs::Float &msg) {
-        impl->windAngleCmd.store(msg.data(), std::memory_order_relaxed);
+  this->dataPtr->node.Subscribe<msgs::Vector3d>(
+      this->dataPtr->topicWindCmd,
+      [impl](const msgs::Vector3d &msg) {
+        impl->windCmdX.store(msg.x(), std::memory_order_relaxed);
+        impl->windCmdY.store(msg.y(), std::memory_order_relaxed);
+        impl->windCmdReceived.store(true, std::memory_order_relaxed);
       });
 }
 
@@ -317,14 +302,17 @@ void USVWind::PreUpdate(
     return;
 
   // Apply any runtime wind parameter updates from subscriptions
-  double currentAngle =
-      this->dataPtr->windAngleCmd.load(std::memory_order_relaxed);
-  this->dataPtr->windDirection.X(cos(currentAngle * M_PI / 180));
-  this->dataPtr->windDirection.Y(sin(currentAngle * M_PI / 180));
-  this->dataPtr->windDirection.Z(0);
-
-  this->dataPtr->windMeanVelocity =
-      this->dataPtr->windSpeedCmd.load(std::memory_order_relaxed);
+  if (this->dataPtr->windCmdReceived.load(std::memory_order_relaxed))
+  {
+    double cmdX = this->dataPtr->windCmdX.load(std::memory_order_relaxed);
+    double cmdY = this->dataPtr->windCmdY.load(std::memory_order_relaxed);
+    double speed = std::sqrt(cmdX * cmdX + cmdY * cmdY);
+    this->dataPtr->windMeanVelocity = speed;
+    if (speed > 0.0)
+    {
+      this->dataPtr->windDirection.Set(cmdX / speed, cmdY / speed, 0.0);
+    }
+  }
 
   auto time = std::chrono::duration<double>(_info.simTime);
   if (this->dataPtr->previousTime == std::chrono::duration<double>(0))
@@ -380,7 +368,8 @@ void USVWind::PreUpdate(
   this->dataPtr->windSpeedPub.Publish(windVelMsg);
 
   msgs::Float windDirMsg;
-  windDirMsg.set_data(currentAngle);
+  windDirMsg.set_data(atan2(this->dataPtr->windDirection.Y(),
+                            this->dataPtr->windDirection.X()) * 180.0 / M_PI);
   this->dataPtr->windDirectionPub.Publish(windDirMsg);
 
   for (auto &windObj : this->dataPtr->windObjs)
