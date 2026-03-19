@@ -86,6 +86,13 @@ class vrx::WaveVisualPrivate
   /// \brief Indicate whether the shader params have been set or not
   public: bool paramsSet = false;
 
+  /// \brief Indicates wavefield parameters changed and shader needs updating
+  public: bool wavefieldDirty = false;
+
+  /// \brief Push current wavefield parameters to vertex shader uniforms.
+  /// Buffers must already be initialized via InitializeBuffer().
+  public: void UpdateWavefieldShaderParams();
+
   /// \brief Shader param. Recale x and y components of normals.
   public: float rescale = 0.5f;
 
@@ -325,59 +332,15 @@ void WaveVisualPrivate::OnUpdate()
     (*vsParams)["bumpSpeed"].InitializeBuffer(2);
     (*vsParams)["bumpSpeed"].UpdateBuffer(bumpSpeedV);
 
-    // wavefield parameters:
-    (*vsParams)["Nwaves"] = static_cast<int>(this->wavefield.Number());
-    float amplitudeV[3] = {
-        static_cast<float>(this->wavefield.Amplitude_V()[0]),
-        static_cast<float>(this->wavefield.Amplitude_V()[1]),
-        static_cast<float>(this->wavefield.Amplitude_V()[2])};
+    // wavefield parameters - allocate shader buffers and set initial values
     (*vsParams)["amplitude"].InitializeBuffer(3);
-    (*vsParams)["amplitude"].UpdateBuffer(amplitudeV);
-
-    float wavenumberV[3] = {
-        static_cast<float>(this->wavefield.Wavenumber_V()[0]),
-        static_cast<float>(this->wavefield.Wavenumber_V()[1]),
-        static_cast<float>(this->wavefield.Wavenumber_V()[2])};
     (*vsParams)["wavenumber"].InitializeBuffer(3);
-    (*vsParams)["wavenumber"].UpdateBuffer(wavenumberV);
-
-    float omegaV[3] = {
-        static_cast<float>(this->wavefield.AngularFrequency_V()[0]),
-        static_cast<float>(this->wavefield.AngularFrequency_V()[1]),
-        static_cast<float>(this->wavefield.AngularFrequency_V()[2])};
     (*vsParams)["omega"].InitializeBuffer(3);
-    (*vsParams)["omega"].UpdateBuffer(omegaV);
-
-    auto directions0 = this->wavefield.Direction_V()[0];
-    float dir0[2] = {
-        static_cast<float>(directions0.X()),
-        static_cast<float>(directions0.Y())};
     (*vsParams)["dir0"].InitializeBuffer(2);
-    (*vsParams)["dir0"].UpdateBuffer(dir0);
-
-    auto directions1 = this->wavefield.Direction_V()[1];
-    float dir1[2] = {
-        static_cast<float>(directions1.X()),
-        static_cast<float>(directions1.Y())};
     (*vsParams)["dir1"].InitializeBuffer(2);
-    (*vsParams)["dir1"].UpdateBuffer(dir1);
-
-    auto directions2 = this->wavefield.Direction_V()[2];
-    float dir2[2] = {
-        static_cast<float>(directions2.X()),
-        static_cast<float>(directions2.Y())};
     (*vsParams)["dir2"].InitializeBuffer(2);
-    (*vsParams)["dir2"].UpdateBuffer(dir2);
-
-    float steepnessV[3] = {
-        static_cast<float>(this->wavefield.Steepness_V()[0]),
-        static_cast<float>(this->wavefield.Steepness_V()[1]),
-        static_cast<float>(this->wavefield.Steepness_V()[2])};
     (*vsParams)["steepness"].InitializeBuffer(3);
-    (*vsParams)["steepness"].UpdateBuffer(steepnessV);
-
-    float tau = this->wavefield.Tau();
-    (*vsParams)["tau"] = tau;
+    this->UpdateWavefieldShaderParams();
 
     // camera_position_object_space is a constant defined by ogre.
     (*vsParams)["camera_position_object_space"] = 1;
@@ -423,6 +386,13 @@ void WaveVisualPrivate::OnUpdate()
     this->paramsSet = true;
   }
 
+  // Re-push wavefield parameters to shaders when they change at runtime
+  if (this->paramsSet && this->wavefieldDirty)
+  {
+    this->UpdateWavefieldShaderParams();
+    this->wavefieldDirty = false;
+  }
+
   // time variables need to be updated every iteration
   {
     float floatValue = (std::chrono::duration_cast<std::chrono::nanoseconds>(
@@ -434,10 +404,64 @@ void WaveVisualPrivate::OnUpdate()
 }
 
 //////////////////////////////////////////////////
+void WaveVisualPrivate::UpdateWavefieldShaderParams()
+{
+  auto vsParams = this->material->VertexShaderParams();
+
+  (*vsParams)["Nwaves"] = static_cast<int>(this->wavefield.Number());
+
+  float amplitudeV[3] = {
+      static_cast<float>(this->wavefield.Amplitude_V()[0]),
+      static_cast<float>(this->wavefield.Amplitude_V()[1]),
+      static_cast<float>(this->wavefield.Amplitude_V()[2])};
+  (*vsParams)["amplitude"].UpdateBuffer(amplitudeV);
+
+  float wavenumberV[3] = {
+      static_cast<float>(this->wavefield.Wavenumber_V()[0]),
+      static_cast<float>(this->wavefield.Wavenumber_V()[1]),
+      static_cast<float>(this->wavefield.Wavenumber_V()[2])};
+  (*vsParams)["wavenumber"].UpdateBuffer(wavenumberV);
+
+  float omegaV[3] = {
+      static_cast<float>(this->wavefield.AngularFrequency_V()[0]),
+      static_cast<float>(this->wavefield.AngularFrequency_V()[1]),
+      static_cast<float>(this->wavefield.AngularFrequency_V()[2])};
+  (*vsParams)["omega"].UpdateBuffer(omegaV);
+
+  auto directions0 = this->wavefield.Direction_V()[0];
+  float dir0[2] = {
+      static_cast<float>(directions0.X()),
+      static_cast<float>(directions0.Y())};
+  (*vsParams)["dir0"].UpdateBuffer(dir0);
+
+  auto directions1 = this->wavefield.Direction_V()[1];
+  float dir1[2] = {
+      static_cast<float>(directions1.X()),
+      static_cast<float>(directions1.Y())};
+  (*vsParams)["dir1"].UpdateBuffer(dir1);
+
+  auto directions2 = this->wavefield.Direction_V()[2];
+  float dir2[2] = {
+      static_cast<float>(directions2.X()),
+      static_cast<float>(directions2.Y())};
+  (*vsParams)["dir2"].UpdateBuffer(dir2);
+
+  float steepnessV[3] = {
+      static_cast<float>(this->wavefield.Steepness_V()[0]),
+      static_cast<float>(this->wavefield.Steepness_V()[1]),
+      static_cast<float>(this->wavefield.Steepness_V()[2])};
+  (*vsParams)["steepness"].UpdateBuffer(steepnessV);
+
+  float tau = this->wavefield.Tau();
+  (*vsParams)["tau"] = tau;
+}
+
+//////////////////////////////////////////////////
 void WaveVisualPrivate::OnWavefield(const msgs::Param &_msg)
 {
   std::lock_guard<std::mutex> lock(this->mutex);
   this->wavefield.Load(_msg);
+  this->wavefieldDirty = true;
 }
 
 GZ_ADD_PLUGIN(vrx::WaveVisual,
