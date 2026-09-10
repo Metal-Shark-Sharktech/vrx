@@ -20,6 +20,7 @@
 #include <string>
 #include <vector>
 #include <gz/common/Profiler.hh>
+#include <gz/math/CoordinateVector3.hh>
 #include <gz/math/Pose3.hh>
 #include <gz/math/Quaternion.hh>
 #include <gz/math/SphericalCoordinates.hh>
@@ -738,9 +739,16 @@ void WildlifeScoringPlugin::Implementation::PublishAnimalLocations(
 
     auto in = math::SphericalCoordinates::CoordinateType::GLOBAL;
     auto out = math::SphericalCoordinates::CoordinateType::SPHERICAL;
-    auto latlon = this->sc.PositionTransform(pose.Pos(), in, out);
-    latlon.X(GZ_RTOD(latlon.X()));
-    latlon.Y(GZ_RTOD(latlon.Y()));
+    const auto converted = this->sc.PositionTransform(
+      math::CoordinateVector3::Metric(pose.Pos()), in, out);
+    if (!converted.has_value())
+    {
+      gzerr << "Failed to convert an animal pose to spherical coordinates." << std::endl;
+      return;
+    }
+    // A spherical CoordinateVector3 carries Angle, so no radian-to-degree step is needed.
+    const math::Vector3d latlon(
+      converted->Lat()->Degree(), converted->Lon()->Degree(), *converted->Z());
 
     const math::Quaternion<double> orientation = pose.Rot();
 

@@ -20,6 +20,7 @@
 #include <string>
 #include <vector>
 #include <gz/common/Profiler.hh>
+#include <gz/math/CoordinateVector3.hh>
 #include <gz/math/Matrix4.hh>
 #include <gz/math/Pose3.hh>
 #include <gz/math/Quaternion.hh>
@@ -379,9 +380,17 @@ void PerceptionScoringPlugin::Implementation::ProcessAttempts(
       if (obj.type == typeReported)
       {
         // Convert geo pose to Gazebo pose.
-        math::Vector3d scVec(_msg.position().x(), _msg.position().y(), 0);
-        math::Vector3d cartVec = this->world->SphericalCoordinates(
+        const auto scVec = math::CoordinateVector3::Spherical(
+          GZ_DTOR(_msg.position().x()), GZ_DTOR(_msg.position().y()), 0);
+        const auto converted = this->world->SphericalCoordinates(
           _ecm)->LocalFromSphericalPosition(scVec);
+        if (!converted.has_value())
+        {
+          gzerr << "Failed to convert a reported object pose to local coordinates."
+                << std::endl;
+          continue;
+        }
+        const math::Vector3d cartVec(*converted->X(), *converted->Y(), *converted->Z());
 
         // Get current pose of the current object.
         math::Pose3d truePose =

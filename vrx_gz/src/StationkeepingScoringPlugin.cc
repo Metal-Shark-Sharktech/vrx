@@ -15,6 +15,7 @@
  *
  */
 
+#include <gz/math/CoordinateVector3.hh>
 #include <gz/sim/components/Name.hh>
 #include <gz/sim/components/Pose.hh>
 #include <gz/sim/components/World.hh>
@@ -144,13 +145,20 @@ void StationkeepingScoringPlugin::Configure(const sim::Entity &_entity,
 
     // Convert lat/lon to local
     // Snippet from UUV Simulator SphericalCoordinatesROSInterfacePlugin.cc
-    math::Vector3d scVec(this->dataPtr->goalLat, this->dataPtr->goalLon, 0.0);
-    math::Vector3d cartVec =
-      this->dataPtr->sc.LocalFromSphericalPosition(scVec);
+    // gz-math 9 takes and returns CoordinateVector3, which carries whether it is
+    // metric or spherical, and returns nullopt if the conversion is not possible.
+    const auto scVec = math::CoordinateVector3::Spherical(
+      GZ_DTOR(this->dataPtr->goalLat), GZ_DTOR(this->dataPtr->goalLon), 0.0);
+    const auto cartVec = this->dataPtr->sc.LocalFromSphericalPosition(scVec);
+    if (!cartVec.has_value())
+    {
+      gzerr << "Failed to convert the goal pose to local coordinates." << std::endl;
+      return;
+    }
 
     // Store local 2D location and yaw
-    this->dataPtr->goalX = cartVec.X();
-    this->dataPtr->goalY = cartVec.Y();
+    this->dataPtr->goalX = *cartVec->X();
+    this->dataPtr->goalY = *cartVec->Y();
     this->dataPtr->goalYaw = latlonyaw.Z();
   }
   else
@@ -163,18 +171,23 @@ void StationkeepingScoringPlugin::Configure(const sim::Entity &_entity,
 
     // Convert local to lat/lon
     // Snippet from UUV Simulator SphericalCoordinatesROSInterfacePlugin.cc
-    math::Vector3d cartVec(this->dataPtr->goalX, this->dataPtr->goalY, xyz.Z());
+    const auto cartVec = math::CoordinateVector3::Metric(
+      this->dataPtr->goalX, this->dataPtr->goalY, xyz.Z());
 
     auto in = math::SphericalCoordinates::CoordinateType::GLOBAL;
     auto out = math::SphericalCoordinates::CoordinateType::SPHERICAL;
-    auto scVec = this->dataPtr->sc.PositionTransform(cartVec, in, out);
-    scVec.X(GZ_RTOD(scVec.X()));
-    scVec.Y(GZ_RTOD(scVec.Y()));
+    const auto scVec = this->dataPtr->sc.PositionTransform(cartVec, in, out);
+    if (!scVec.has_value())
+    {
+      gzerr << "Failed to convert the goal pose to spherical coordinates." << std::endl;
+      return;
+    }
 
-    // Store spherical 2D location
-    this->dataPtr->goalLat = scVec.X();
-    this->dataPtr->goalLon = scVec.Y();
-    this->dataPtr->goalYaw = scVec.Z();
+    // Store spherical 2D location. A spherical CoordinateVector3 carries Angle, so
+    // the degree conversion the old Vector3d form needed is no longer required.
+    this->dataPtr->goalLat = scVec->Lat()->Degree();
+    this->dataPtr->goalLon = scVec->Lon()->Degree();
+    this->dataPtr->goalYaw = *scVec->Z();
   }
 
   // Print some debugging messages

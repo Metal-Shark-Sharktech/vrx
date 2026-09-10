@@ -18,6 +18,7 @@
 #include <chrono>
 #include <string>
 #include <vector>
+#include <gz/math/CoordinateVector3.hh>
 #include <gz/common/Profiler.hh>
 #include <gz/sim/components/Name.hh>
 #include <gz/sim/components/Pose.hh>
@@ -144,12 +145,17 @@ void WayfindingScoringPlugin::Configure(const sim::Entity &_entity,
   
     // Convert lat/lon to local
     //  snippet from UUV Simulator SphericalCoordinatesROSInterfacePlugin.cc
-    math::Vector3d scVec(latlonyaw.X(), latlonyaw.Y(), 0.0);
-  
-    math::Vector3d cartVec =
-      this->dataPtr->sc.LocalFromSphericalPosition(scVec);
-  
-    cartVec.Z() = latlonyaw.Z();
+    const auto scVec = math::CoordinateVector3::Spherical(
+      GZ_DTOR(latlonyaw.X()), GZ_DTOR(latlonyaw.Y()), 0.0);
+
+    const auto converted = this->dataPtr->sc.LocalFromSphericalPosition(scVec);
+    if (!converted.has_value())
+    {
+      gzerr << "Failed to convert a waypoint to local coordinates." << std::endl;
+      continue;
+    }
+
+    math::Vector3d cartVec(*converted->X(), *converted->Y(), latlonyaw.Z());
 
     // build message
     math::Pose3d pose(latlonyaw.X(), latlonyaw.Y(), 0, 0, 0, latlonyaw.Z());
