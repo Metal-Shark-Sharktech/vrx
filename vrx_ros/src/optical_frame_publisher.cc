@@ -20,9 +20,9 @@
 #include <sensor_msgs/msg/camera_info.hpp>
 
 #include <rclcpp/rclcpp.hpp>
-#include <tf2/LinearMath/Quaternion.h>
-#include <tf2_ros/transform_broadcaster.h>
-#include <tf2_ros/static_transform_broadcaster.h>
+#include <tf2/LinearMath/Quaternion.hpp>
+#include <tf2_ros/transform_broadcaster.hpp>
+#include <tf2_ros/static_transform_broadcaster.hpp>
 
 #include <memory>
 #include <string>
